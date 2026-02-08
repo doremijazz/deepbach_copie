@@ -1,2 +1,4 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 DatasetManager/dataset_cache/tensor_datasets/** filter=lfs diff=lfs merge=lfs -text
+DatasetMAnager/dataset_cache/tensor_datasets/ChoraleDataset* filter=lfs diff=lfs merge=lfs -text
+DatasetManager/dataset_cache/tensor_datasets/ChoraleDataset* filter=lfs diff=lfs merge=lfs -text
