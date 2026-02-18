@@ -23,9 +23,6 @@ from DatasetManager.dataset_manager import DatasetManager
 from DatasetManager.metadata import FermataMetadata, TickMetadata, KeyMetadata
 from DeepBach.model_manager import DeepBach
 
-if not zipfile.is_zipfile(file_path):
-    return f"Not a zip/mxl or incomplete file: {file_path}", 400
-
 UPLOAD_FOLDER = '/tmp'
 ALLOWED_EXTENSIONS = {'xml', 'mxl', 'mid', 'midi'}
 
@@ -192,99 +189,99 @@ def compose_from_scratch():
 @app.route('/compose', methods=['POST'])
 def compose():
     try:
-    global deepbach
-    global _num_iterations
-    global _sequence_length_ticks
-    global _tensor_sheet
-    global _tensor_metadata
-    global bach_chorales_dataset
-
-    NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE = 120
-
-    start_tick_selection = int(float(request.form['start_tick']) / NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE)
-    end_tick_selection = int(float(request.form['end_tick']) / NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE)
-
-    file_path = request.form['file_path']
-    print("file_path:", file_path, flush=True)
-    print("exists:", os.path.exists(file_path), flush=True)
-    if os.path.exists(file_path):
-        print("size:", os.path.getsize(file_path), flush=True)
-
-    root, ext = os.path.splitext(file_path)
-    assert ext.lower() == '.mxl', f"Expected .mxl, got {ext}"
-
-    # On écrit l'XML à côté du .mxl
-    # xml_file = f"{root}.xml"
-    xml_file = os.path.join(tempfile.gettempdir(), "deepbach.xml")
-
-    # Si pas de sélection : régénération complète
-    if start_tick_selection == 0 and end_tick_selection == 0:
-        generated_sheet = compose_from_scratch()
-        # plus explicite/robuste que 'xml'
-        generated_sheet.write('musicxml', fp=xml_file)
-        return sheet_to_response(generated_sheet)
-
-    # --- Extraction MXL -> XML (portable, sans unzip) ---
-    # .mxl est un zip contenant au moins un .xml (et parfois un META-INF)
-    with zipfile.ZipFile(file_path, 'r') as z:
-        
-        xml_members = [n for n in z.namelist() if n.lower().endswith('.xml')]
-
-        if not xml_members:
-            return "No .xml found inside the .mxl archive", 400
-
-        # Heuristique: prendre le plus gros xml (souvent le fichier principal)
-        main_xml = max(xml_members, key=lambda n: z.getinfo(n).file_size)
-
+        global deepbach
+        global _num_iterations
+        global _sequence_length_ticks
+        global _tensor_sheet
+        global _tensor_metadata
+        global bach_chorales_dataset
+    
+        NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE = 120
+    
+        start_tick_selection = int(float(request.form['start_tick']) / NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE)
+        end_tick_selection = int(float(request.form['end_tick']) / NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE)
+    
+        file_path = request.form['file_path']
+        print("file_path:", file_path, flush=True)
+        print("exists:", os.path.exists(file_path), flush=True)
+        if os.path.exists(file_path):
+            print("size:", os.path.getsize(file_path), flush=True)
+    
+        root, ext = os.path.splitext(file_path)
+        assert ext.lower() == '.mxl', f"Expected .mxl, got {ext}"
+    
+        # On écrit l'XML à côté du .mxl
+        # xml_file = f"{root}.xml"
+        xml_file = os.path.join(tempfile.gettempdir(), "deepbach.xml")
+    
+        # Si pas de sélection : régénération complète
+        if start_tick_selection == 0 and end_tick_selection == 0:
+            generated_sheet = compose_from_scratch()
+            # plus explicite/robuste que 'xml'
+            generated_sheet.write('musicxml', fp=xml_file)
+            return sheet_to_response(generated_sheet)
+    
+        # --- Extraction MXL -> XML (portable, sans unzip) ---
+        # .mxl est un zip contenant au moins un .xml (et parfois un META-INF)
         with zipfile.ZipFile(file_path, 'r') as z:
-            names = z.namelist()
-            print("zip entries:", names, flush=True)
-
-        # Extraire le contenu XML dans root.xml
-        with z.open(main_xml) as src, open(xml_file, 'wb') as dst:
-            dst.write(src.read())
-
-    # Parser l'XML extrait
-    music21_parsed_chorale = converter.parse(xml_file)
-
-    _tensor_sheet, _tensor_metadata = bach_chorales_dataset.transposed_score_and_metadata_tensors(
-        music21_parsed_chorale, semi_tone=0
-    )
-
-    start_voice_index = int(request.form['start_staff'])
-    end_voice_index = int(request.form['end_staff']) + 1
-
-    time_index_range_ticks = [start_tick_selection, end_tick_selection]
-    region_length = end_tick_selection - start_tick_selection
-
-    # compute batch_size_per_voice:
-    if region_length <= 8:
-        batch_size_per_voice = 2
-    elif region_length <= 16:
-        batch_size_per_voice = 4
-    else:
-        batch_size_per_voice = 8
-
-    num_total_iterations = int(_num_iterations * region_length / batch_size_per_voice)
-
-    fermatas_tensor = get_fermatas_tensor(_tensor_metadata)
-
-    # --- Generate ---
-    (output_sheet, _tensor_sheet, _tensor_metadata) = deepbach.generation(
-        tensor_chorale=_tensor_sheet,
-        tensor_metadata=_tensor_metadata,
-        temperature=1.,
-        batch_size_per_voice=batch_size_per_voice,
-        num_iterations=num_total_iterations,
-        sequence_length_ticks=_sequence_length_ticks,
-        time_index_range_ticks=time_index_range_ticks,
-        fermatas=fermatas_tensor,
-        voice_index_range=[start_voice_index, end_voice_index],
-        random_init=True
-    )
-
-    # Écrire l'XML de sortie à côté du .mxl
-    output_sheet.write('musicxml', fp=xml_file)
+            
+            xml_members = [n for n in z.namelist() if n.lower().endswith('.xml')]
+    
+            if not xml_members:
+                return "No .xml found inside the .mxl archive", 400
+    
+            # Heuristique: prendre le plus gros xml (souvent le fichier principal)
+            main_xml = max(xml_members, key=lambda n: z.getinfo(n).file_size)
+    
+            with zipfile.ZipFile(file_path, 'r') as z:
+                names = z.namelist()
+                print("zip entries:", names, flush=True)
+    
+            # Extraire le contenu XML dans root.xml
+            with z.open(main_xml) as src, open(xml_file, 'wb') as dst:
+                dst.write(src.read())
+    
+        # Parser l'XML extrait
+        music21_parsed_chorale = converter.parse(xml_file)
+    
+        _tensor_sheet, _tensor_metadata = bach_chorales_dataset.transposed_score_and_metadata_tensors(
+            music21_parsed_chorale, semi_tone=0
+        )
+    
+        start_voice_index = int(request.form['start_staff'])
+        end_voice_index = int(request.form['end_staff']) + 1
+    
+        time_index_range_ticks = [start_tick_selection, end_tick_selection]
+        region_length = end_tick_selection - start_tick_selection
+    
+        # compute batch_size_per_voice:
+        if region_length <= 8:
+            batch_size_per_voice = 2
+        elif region_length <= 16:
+            batch_size_per_voice = 4
+        else:
+            batch_size_per_voice = 8
+    
+        num_total_iterations = int(_num_iterations * region_length / batch_size_per_voice)
+    
+        fermatas_tensor = get_fermatas_tensor(_tensor_metadata)
+    
+        # --- Generate ---
+        (output_sheet, _tensor_sheet, _tensor_metadata) = deepbach.generation(
+            tensor_chorale=_tensor_sheet,
+            tensor_metadata=_tensor_metadata,
+            temperature=1.,
+            batch_size_per_voice=batch_size_per_voice,
+            num_iterations=num_total_iterations,
+            sequence_length_ticks=_sequence_length_ticks,
+            time_index_range_ticks=time_index_range_ticks,
+            fermatas=fermatas_tensor,
+            voice_index_range=[start_voice_index, end_voice_index],
+            random_init=True
+        )
+    
+        # Écrire l'XML de sortie à côté du .mxl
+        output_sheet.write('musicxml', fp=xml_file)
 
     except Exception:
         tb = traceback.format_exc()
