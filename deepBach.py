@@ -3,6 +3,7 @@
 """
 
 import click
+import os
 
 from DatasetManager.chorale_dataset import ChoraleDataset
 from DatasetManager.dataset_manager import DatasetManager
@@ -87,8 +88,8 @@ def main(note_embedding_dim,
         num_iterations=num_iterations,
         sequence_length_ticks=sequence_length_ticks,
     )
-    score.show('txt')
-    score.show()
+    path = score.write('musicxml')
+    os.startfile(path)
 
 
 if __name__ == '__main__':
