@@ -23,6 +23,7 @@ from DatasetManager.dataset_manager import DatasetManager
 from DatasetManager.metadata import FermataMetadata, TickMetadata, KeyMetadata
 from DeepBach.model_manager import DeepBach
 
+print("SERVER FILE:", __file__, flush=True)
 UPLOAD_FOLDER = '/tmp'
 ALLOWED_EXTENSIONS = {'xml', 'mxl', 'mid', 'midi'}
 
@@ -87,6 +88,7 @@ def init_app(note_embedding_dim,
              ticks_per_quarter,
              port
              ):
+    print("INIT_APP called", flush=True)
     global metadatas
     global _sequence_length_ticks
     global _num_iterations
@@ -124,7 +126,8 @@ def init_app(note_embedding_dim,
         linear_hidden_size=linear_hidden_size
     )
     deepbach.load()
-    deepbach.cuda()
+    if torch.cuda.is_available():
+        deepbach.cuda()
 
     # launch the script
     # use threaded=True to fix Chrome/Chromium engine hanging on requests
@@ -136,6 +139,7 @@ def init_app(note_embedding_dim,
     else:
         # accessible from outside:
         app.run(host='0.0.0.0', port=port, threaded=True)
+    print("INIT done deepbach is None?", deepbach is None, flush=True)
 
 
 def get_fermatas_tensor(metadata_tensor: torch.Tensor) -> torch.Tensor:
@@ -166,6 +170,7 @@ def compose_from_scratch():
         - Request: empty, generation is done in an unconstrained fashion
         - Response: a sheet, MusicXML
     """
+    print("compose_from_scratch LINENO:", compose_from_scratch.__code__.co_firstlineno, flush=True)
     global deepbach
     global _sequence_length_ticks
     global _num_iterations
@@ -216,6 +221,7 @@ def compose():
     
         # Si pas de sélection : régénération complète
         if start_tick_selection == 0 and end_tick_selection == 0:
+            print("deepbach:", deepbach, flush=True)
             generated_sheet = compose_from_scratch()
             # plus explicite/robuste que 'xml'
             generated_sheet.write('musicxml', fp=xml_file)
@@ -223,23 +229,26 @@ def compose():
     
         # --- Extraction MXL -> XML (portable, sans unzip) ---
         # .mxl est un zip contenant au moins un .xml (et parfois un META-INF)
-        with zipfile.ZipFile(file_path, 'r') as z:
-            
-            xml_members = [n for n in z.namelist() if n.lower().endswith('.xml')]
-    
+        # Lire le contenu XML tant que l'archive est ouverte
+        with zipfile.ZipFile(file_path, "r") as zf:
+            print("zip open fp is None?", zf.fp is None, flush=True)
+        
+            names = zf.namelist()
+            print("zip entries:", names, flush=True)
+        
+            xml_members = [n for n in names if n.lower().endswith(".xml")]
             if not xml_members:
                 return "No .xml found inside the .mxl archive", 400
-    
-            # Heuristique: prendre le plus gros xml (souvent le fichier principal)
-            main_xml = max(xml_members, key=lambda n: z.getinfo(n).file_size)
-    
-            with zipfile.ZipFile(file_path, 'r') as z:
-                names = z.namelist()
-                print("zip entries:", names, flush=True)
-    
-            # Extraire le contenu XML dans root.xml
-            with z.open(main_xml) as src, open(xml_file, 'wb') as dst:
-                dst.write(src.read())
+        
+            main_xml = max(xml_members, key=lambda n: zf.getinfo(n).file_size)
+            print("main_xml:", main_xml, flush=True)
+        
+            with zf.open(main_xml) as src:
+                xml_bytes = src.read()
+
+# Écrire l'XML une fois sorti du zip
+with open(xml_file, "wb") as dst:
+    dst.write(xml_bytes)
     
         # Parser l'XML extrait
         music21_parsed_chorale = converter.parse(xml_file)
