@@ -18,8 +18,6 @@ from tqdm import tqdm
 import torch
 import logging
 from logging import handlers as logging_handlers
-from flask import Response
-import traceback
 
 from DatasetManager.chorale_dataset import ChoraleDataset
 from DatasetManager.dataset_manager import DatasetManager
@@ -27,12 +25,16 @@ from DatasetManager.metadata import FermataMetadata, TickMetadata, KeyMetadata
 from DeepBach.model_manager import DeepBach
 
 print("SERVER FILE:", __file__, flush=True)
+
 UPLOAD_FOLDER = '/tmp'
 ALLOWED_EXTENSIONS = {'xml', 'mxl', 'mid', 'midi'}
 
 app = Flask(__name__)
 
-@app.root("\routes", methods=["GET"])
+from flask import Response
+import traceback
+
+@app.route("/routes", methods=["GET"])
 def routes():
     return "\n".join(sorted([str(r) for r in app.url_map.iter_rules()])), 200, {"Content-Type": "text/plain"}
 
@@ -107,7 +109,7 @@ def init_app(note_embedding_dim,
              ticks_per_quarter,
              port
              ):
-    print("INIT_APP called", flush=True)
+    print("INIT_APP CALLED", flush=True)
     global metadatas
     global _sequence_length_ticks
     global _num_iterations
@@ -145,7 +147,9 @@ def init_app(note_embedding_dim,
         linear_hidden_size=linear_hidden_size
     )
     deepbach.load()
-    if torch.cuda.is_available():
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print("DeepBach device:", device, flush=True)
+    if device == "cuda":
         deepbach.cuda()
 
     # launch the script
@@ -157,8 +161,8 @@ def init_app(note_embedding_dim,
         app.run(threaded=True)
     else:
         # accessible from outside:
-        app.run(host='0.0.0.0', port=port, threaded=True)
-    print("INIT done deepbach is None?", deepbach is None, flush=True)
+        app.run(host='0.0.0.0', port=port, threaded=True, use_reloader=False)
+    print("INIT DONE deepbach is None?", deepbach is None, flush=True)
 
 
 def get_fermatas_tensor(metadata_tensor: torch.Tensor) -> torch.Tensor:
@@ -212,16 +216,20 @@ def compose_from_scratch():
         deepbach.generation(num_iterations=initial_num_iterations,
                             sequence_length_ticks=_sequence_length_ticks)
     )
+    print("end compose from scraych", flush=True)
     return generated_sheet
 
-@app.route("/crash", methods=["GET"])
-def crash():
-    raise RuntimeError("BOOM")
 
+
+#@app.route("/crash", methods=["GET"])
+#def crash():
+    #raise RuntimeError("BOOM")
 
 @app.route('/compose', methods=['POST'])
 def compose():
     try:
+        
+        
         global deepbach
         global _num_iterations
         global _sequence_length_ticks
@@ -232,8 +240,10 @@ def compose():
         print("compose called | pid=", os.getpid(), "| exe=", sys.executable, flush=True)
         print("deepbach is None?", deepbach is None, flush=True)
 
+
         if deepbach is None:
             init_app()
+
     
         NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE = 120
     
@@ -245,6 +255,7 @@ def compose():
         print("exists:", os.path.exists(file_path), flush=True)
         if os.path.exists(file_path):
             print("size:", os.path.getsize(file_path), flush=True)
+            print("is_zipfile:", zipfile.is_zipfile(file_path), flush=True)
     
         root, ext = os.path.splitext(file_path)
         assert ext.lower() == '.mxl', f"Expected .mxl, got {ext}"
@@ -255,7 +266,6 @@ def compose():
     
         # Si pas de sélection : régénération complète
         if start_tick_selection == 0 and end_tick_selection == 0:
-            print("deepbach:", deepbach, flush=True)
             generated_sheet = compose_from_scratch()
             # plus explicite/robuste que 'xml'
             generated_sheet.write('musicxml', fp=xml_file)
@@ -263,6 +273,9 @@ def compose():
     
         # --- Extraction MXL -> XML (portable, sans unzip) ---
         # .mxl est un zip contenant au moins un .xml (et parfois un META-INF)
+        xml_file = os.path.join(tempfile.gettempdir(), "deepbach.xml")
+
+        # Lire le contenu XML tant que l'archive est ouverte
         # Lire le contenu XML tant que l'archive est ouverte
         with zipfile.ZipFile(file_path, "r") as zf:
             print("zip open fp is None?", zf.fp is None, flush=True)
@@ -280,9 +293,11 @@ def compose():
             with zf.open(main_xml) as src:
                 xml_bytes = src.read()
 
-# Écrire l'XML une fois sorti du zip
-with open(xml_file, "wb") as dst:
-    dst.write(xml_bytes)
+        # Écrire l'XML une fois sorti du zip
+        with open(xml_file, "wb") as dst:
+            dst.write(xml_bytes)
+
+
     
         # Parser l'XML extrait
         music21_parsed_chorale = converter.parse(xml_file)
@@ -416,5 +431,5 @@ if __name__ == '__main__':
 
     app.logger.addHandler(file_handler)
     app.logger.setLevel(logging.INFO)
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
 init_app()
