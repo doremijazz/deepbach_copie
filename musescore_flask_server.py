@@ -8,6 +8,7 @@ import subprocess
 import zipfile
 import traceback
 import tempfile
+import sys
 
 import music21
 import numpy as np
@@ -17,6 +18,8 @@ from tqdm import tqdm
 import torch
 import logging
 from logging import handlers as logging_handlers
+from flask import Response
+import traceback
 
 from DatasetManager.chorale_dataset import ChoraleDataset
 from DatasetManager.dataset_manager import DatasetManager
@@ -28,6 +31,22 @@ UPLOAD_FOLDER = '/tmp'
 ALLOWED_EXTENSIONS = {'xml', 'mxl', 'mid', 'midi'}
 
 app = Flask(__name__)
+
+@app.root("\routes", methods=["GET"])
+def routes():
+    return "\n".join(sorted([str(r) for r in app.url_map.iter_rules()])), 200, {"Content-Type": "text/plain"}
+
+@app.errorhandler(500)
+def handle_500(e):
+    tb = traceback.format_exc()
+    print(Response(tb, status=500, mimetype="text/plain"),flush=True)
+    return Response(tb, status=500, mimetype="text/plain")
+
+@app.errorhandler(Exception)
+def handle_any_exception(e):
+    tb = traceback.format_exc()
+    print(Response(tb, status=500, mimetype="text/plain"),flush=True)
+    return Response(tb, status=500, mimetype="text/plain")
 
 deepbach = None
 _tensor_metadata = None
@@ -170,12 +189,17 @@ def compose_from_scratch():
         - Request: empty, generation is done in an unconstrained fashion
         - Response: a sheet, MusicXML
     """
-    print("compose_from_scratch LINENO:", compose_from_scratch.__code__.co_firstlineno, flush=True)
+    print("start compose from scratch", flush=True)
     global deepbach
     global _sequence_length_ticks
     global _num_iterations
     global _tensor_sheet
     global _tensor_metadata
+
+    if deepbach is None:
+        raise RuntimeError("deepbach is None: init_app() was not executed or failed")
+
+    print("deepbach:", deepbach, flush=True)
 
     # Use more iterations for the initial generation step
     # FIXME hardcoded 4/4 time-signature
@@ -190,6 +214,10 @@ def compose_from_scratch():
     )
     return generated_sheet
 
+@app.route("/crash", methods=["GET"])
+def crash():
+    raise RuntimeError("BOOM")
+
 
 @app.route('/compose', methods=['POST'])
 def compose():
@@ -200,6 +228,12 @@ def compose():
         global _tensor_sheet
         global _tensor_metadata
         global bach_chorales_dataset
+
+        print("compose called | pid=", os.getpid(), "| exe=", sys.executable, flush=True)
+        print("deepbach is None?", deepbach is None, flush=True)
+
+        if deepbach is None:
+            init_app()
     
         NUM_MIDI_TICKS_IN_SIXTEENTH_NOTE = 120
     
@@ -232,17 +266,17 @@ def compose():
         # Lire le contenu XML tant que l'archive est ouverte
         with zipfile.ZipFile(file_path, "r") as zf:
             print("zip open fp is None?", zf.fp is None, flush=True)
-        
+
             names = zf.namelist()
             print("zip entries:", names, flush=True)
-        
+
             xml_members = [n for n in names if n.lower().endswith(".xml")]
             if not xml_members:
                 return "No .xml found inside the .mxl archive", 400
-        
+
             main_xml = max(xml_members, key=lambda n: zf.getinfo(n).file_size)
             print("main_xml:", main_xml, flush=True)
-        
+
             with zf.open(main_xml) as src:
                 xml_bytes = src.read()
 
@@ -376,6 +410,7 @@ def current_model_get():
 
 
 if __name__ == '__main__':
+    init_app()
     file_handler = logging_handlers.RotatingFileHandler(
         'app.log', maxBytes=10000, backupCount=5)
 
